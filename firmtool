@@ -1,0 +1,266 @@
+#!/usr/bin/env python
+
+__author__    = "TuxSH"
+__copyright__ = "Copyright (c) 2017 TuxSH"
+__license__   = "BSD"
+__version__   = "0.1"
+
+"""
+Parses, extracts, and builds 3DS firmware files
+"""
+
+from struct import pack, unpack, unpack_from
+from binascii import hexlify, unhexlify
+
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256
+from Crypto.Util import Counter
+import argparse
+import sys
+import os
+
+def keyscrambler(keyX, keyY):
+    #http://www.falatic.com/index.php/108/python-and-bitwise-rotation
+    rol = lambda val, r_bits, max_bits: \
+        (val << r_bits%max_bits) & (2**max_bits-1) | \
+        ((val & (2**max_bits-1)) >> (max_bits-(r_bits%max_bits)))
+    return rol((rol(keyX, 2, 128) ^ keyY) + 0x1FF9E9AAC5FE0408024591DC5D52768A, 87, 128)
+
+def exportP9(basePath, data):
+    if not os.path.isdir(os.path.join(basePath, "modules")):
+        os.mkdir(os.path.join(basePath, "modules"))
+
+    pos = data.find(b"Process9") - 0x200
+
+    if pos < 0: return
+    size = unpack_from("<I", data, pos + 0x104)[0] * 0x200
+    with open(os.path.join(basePath, "modules", "Process9.cxi"), "wb+") as f:
+        f.write(data[pos : pos + size])
+
+class FirmSectionHeader(object):
+    def check(self):
+        off = self.offset
+        if self.copyMethod == 0 and (1 << 20) > self.size >= 0x800+0xA00 and self.address == 0x08006000:
+            if self.sectionData[0x50 : 0x53] == b"K9L":
+                self.guessedType = self.sectionData[0x50 : 0x54].decode("ascii")
+            elif self.sectionData[0x50 : 0x54] == b"\xFF\xFF\xFF\xFF":
+                self.guessedType = "K9L0"
+        elif self.copyMethod == 0 and (1 << 20) > self.size >= 0xA00 and self.address == 0x08006800:
+            self.guessedType = "Kernel9"
+        elif self.copyMethod == 1 and self.size >= 0xA00:
+            if self.sectionData[0x100 : 0x104] == b"NCCH":
+                self.guessedType = "Kernel11 modules"
+
+        H = SHA256.new()
+        H.update(self.sectionData)
+        self.hashIsValid = self.hash == H.digest()
+
+    def __init__(self, n, data = None):
+        self.num = n
+        hdrData = b'\x00'* 0x30 if data is None else data[0x40 + 0x30 * n : 0x40 + 0x30 * (n + 1)]
+        self.offset, self.address, self.size, self.copyMethod, self.hash = unpack("<4I32s", hdrData)
+        self.sectionData = b'' if self.size == 0 else data[self.offset : self.offset + self.size]
+        self.guessedType = ''
+        self.hashIsValid = True
+        if not (data is None): self.check()
+
+    def setData(self, data):
+        self.sectionData = data
+        self.size = len(data)
+        self.guessedType = ''
+        self.hashIsValid = True
+        H = SHA256.new()
+        H.update(data)
+        self.hash = H.digest()
+
+    def buildHeader(self):
+        return pack("<4I32s", self.offset, self.address, self.size, self.copyMethod, self.hash)
+
+    def export(self, basePath, extractModules = False, secretSector = None):
+        if self.guessedType == "Kernel11 modules" and extractModules:
+            pos = 0
+
+            if not os.path.isdir(os.path.join(basePath, "modules")):
+                os.mkdir(os.path.join(basePath, "modules"))
+            while pos < self.size:
+                size = unpack_from("<I", self.sectionData, pos + 0x104)[0] * 0x200
+                name = self.sectionData[pos + 0x200: pos + 0x208].decode("ascii")
+                name = "{0}.cxi".format(name[:name.find('\x00')])
+                with open(os.path.join(basePath, "modules", name), "wb+") as f:
+                    f.write(self.sectionData[pos : pos + size])
+                pos += size
+
+            with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
+                f.write(self.sectionData)
+
+        elif self.guessedType.startswith("K9L") and secretSector is not None:
+            encKeyX = self.sectionData[:0x10] if self.guessedType[3] == '0' else self.sectionData[0x60 : 0x70]
+            key0x11 = secretSector[:0x10] if self.guessedType[3] != '2' else secretSector[0x10 : 0x20]
+
+            keyX = AES.new(key0x11, AES.MODE_ECB).decrypt(encKeyX)
+            keyY = self.sectionData[0x10 : 0x20]
+
+            ctr = int(hexlify(self.sectionData[0x20 : 0x30]), 16)
+            key = unhexlify("{0:16X}".format(keyscrambler(int(hexlify(keyX), 16), int(hexlify(keyY), 16))))
+
+            sizeDec = self.sectionData[0x30 : 0x38].decode("ascii")
+            size = int(sizeDec[:sizeDec.find('\x00')])
+
+            data = self.sectionData
+            if 0x800 + size <= self.size:
+                data = self.sectionData[:0x800] + \
+                       AES.new(key, AES.MODE_CTR, counter= Counter.new(128, initial_value=ctr)).decrypt(self.sectionData[0x800 : 0x800 + size]) + \
+                       self.sectionData[0x800+size:]
+                exportP9(basePath, data)
+
+            with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
+                f.write(data)
+
+        elif self.guessedType == "Kernel9":
+            exportP9(basePath, self.sectionData)
+
+            with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
+                f.write(self.sectionData)
+
+        else:
+            with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
+                f.write(self.sectionData)
+
+    def __str__(self):
+        types = ("NDMA", "XDMA", "memcpy")
+        return """Copy type:\t{0}{1}
+Offset:\t\t0x{2:08X}
+Address:\t0x{3:08X}
+Size:\t\t0x{4:08X}
+Hash:\t\t{5:032X}{6}""".format(types[self.copyMethod] if 0 <= self.copyMethod <= 2 else "invalid ({0})".format(self.copyMethod),
+        "\nGuessed type:\t{0}".format(self.guessedType) if self.guessedType else "",
+        self.offset, self.address, self.size, int(hexlify(self.hash), 16), " (invalid)" if not self.hashIsValid else "")
+
+
+class Firm(object):
+    def check(self):
+        self.arm11EntrypointFound, self.arm9EntrypointFound = False, False
+        for i in range(4):
+            sec = self.sections[i]
+            self.arm11EntrypointFound = self.arm11EntrypointFound or sec.address <= self.arm11Entrypoint < sec.address + sec.size
+            self.arm9EntrypointFound = self.arm9EntrypointFound or sec.address <= self.arm9Entrypoint < sec.address + sec.size
+            sec.check()
+
+    def export(self, basePath, exportModules = False, secretSector = None):
+        for i in range(4):
+            if self.sections[i].size != 0:
+                self.sections[i].export(basePath, exportModules, secretSector)
+
+    def __init__(self, data = None):
+        if data is None:
+            self.priority, self.arm11Entrypoint, self.arm9Entrypoint = 0, 0, 0
+            self.sections = [FirmSectionHeader(i) for i in range(4)]
+            self.reserved, self.signature = b'\x00'* 0x30, b'\x00'* 0x100
+        else:
+            if data[:4] != b"FIRM":
+                raise RuntimeError("Not a FIRM file")
+
+            self.priority, self.arm11Entrypoint, self.arm9Entrypoint, self.reserved = unpack_from("<3I48s", data, 4)
+            self.sections = [FirmSectionHeader(i, data) for i in range(4)]
+            self.signature = data[0x100 : 0x200]
+            self.check()
+
+    def setSectionData(self, n, data):
+        self.sections[n].setData(data)
+
+        off = 0x200
+        for i in range(4):
+            if self.sections[i].size != 0:
+                self.sections[i].offset = off
+                off += self.sections[i].size
+
+    def build(self):
+        hdr1 = pack("<3I48s", self.priority, self.arm11Entrypoint, self.arm9Entrypoint, self.reserved)
+        hdr2 = b''.join(self.sections[i].buildHeader() for i in range(4))
+        secs = b''.join(self.sections[i].sectionData for i in range(4))
+        return b''.join((b"FIRM", hdr1, hdr2, self.signature, secs))
+
+    def __str__(self):
+        hdr = """Priority:\t\t{0}
+
+ARM9 entrypoint:\t0x{1:08X}{2}
+ARM11 entrypoint:\t0x{3:08X}{4}
+
+RSA-2048 signature:\t{5:0256X}
+
+""".format(self.priority, self.arm9Entrypoint, " (invalid)" if not self.arm9EntrypointFound else "",
+                   self.arm11Entrypoint, " (invalid)" if not self.arm11EntrypointFound else "", int(hexlify(self.signature), 16))
+
+        #fmt_section = lambda n: "Section {0}:\n{1}".format(n), str(self.sections[n])))
+        secs = '\n\n'.join("Section {0}:\n{1}".format(i, ''.join('\t' + l for l in str(self.sections[i]).splitlines(True)))
+                for i in range(4) if self.sections[i].size != 0)
+        return hdr+secs
+
+
+def parseFirm(args):
+    print(Firm(args.infile.read()))
+
+def extractFirm(args):
+    firmObj = Firm(args.infile.read())
+    firmObj.export(args.outdir, args.export_modules, None if args.secret_sector is None else args.secret_sector.read())
+
+def buildFirm(args):
+    if not (len(args.section_addresses) == len(args.section_data) == len(args.section_copy_methods)):
+        raise argparse.ArgumentError("number of sections not matching")
+    elif len(args.section_addresses) > 4 or len(args.section_data) > 4 or len(args.section_copy_methods) > 4:
+        raise argparse.ArgumentError("too many sections")
+
+    firmObj = Firm()
+    firmObj.arm9Entrypoint = args.arm9_entrypoint
+    firmObj.arm11Entrypoint = args.arm11_entrypoint
+
+    for i in range(len(args.section_addresses)):
+        firmObj.sections[i].address = args.section_addresses[i]
+        firmObj.sections[i].copyMethod = ("NDMA", "XDMA", "memcpy").index(args.section_copy_methods[i])
+        firmObj.setSectionData(i, args.section_data[i].read())
+
+    firmObj.check()
+    if not firmObj.arm9EntrypointFound:
+        raise argparse.ArgumentError("invalid ARM9 entrypoint")
+
+    if not firmObj.arm11EntrypointFound:
+        raise argparse.ArgumentError("invalid ARM11 entrypoint")
+
+    args.outfile.write(firmObj.build())
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="firmtool", description="Parses, extracts, and builds 3DS firmware files.")
+    subparsers = parser.add_subparsers(help="sub-command help")
+
+    parser_parse = subparsers.add_parser("parse")
+    parser_parse.set_defaults(func=parseFirm)
+    parser_parse.add_argument("infile", type=argparse.FileType("rb"))
+
+    parser_extract = subparsers.add_parser("extract")
+    parser_extract.set_defaults(func=extractFirm)
+    parser_extract.add_argument("infile", help="Input firmware file", type=argparse.FileType("rb"))
+    parser_extract.add_argument("outdir", help="Output directory (current directory by default)", nargs='?', default='.')
+    parser_extract.add_argument("-m", "--export-modules", help="Export k11 modules and Process9 (when applicable and if possible)",
+                                action="store_true")
+    parser_extract.add_argument("-s", "--secret-sector", help="Path to decrypted secret sector, to decrypt the arm9 binary (when applicable)",
+                                type=argparse.FileType("rb"))
+
+    parser_build = subparsers.add_parser("build")
+    parser_build.set_defaults(func=buildFirm)
+    parser_build.add_argument("outfile", help="Output firmware file", type=argparse.FileType("wb+"))
+    parser_build.add_argument("-n", "--arm9-entrypoint", help="ARM9 entrypoint (required)", type=int, required=True) # "nine"
+    parser_build.add_argument("-e", "--arm11-entrypoint", help="ARM11 entrypoint (required)", type=int, required=True) # "eleven"
+    parser_build.add_argument("-D", "--section-data", help="Files containing the data of each section (required)", type=argparse.FileType("rb"), nargs='+', required=True)
+    parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (required)", type=int, nargs='+', required=True)
+    parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
+
+    args = parser.parse_args()
+
+    # http://bugs.python.org/issue16308 it's still not fixed, WTF are they doing ?!
+    try:
+        getattr(args, "func")
+    except AttributeError:
+        parser.print_help()
+        sys.exit(0)
+
+    args.func(args)
