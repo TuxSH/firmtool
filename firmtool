@@ -37,6 +37,78 @@ def exportP9(basePath, data):
     with open(os.path.join(basePath, "modules", "Process9.cxi"), "wb+") as f:
         f.write(data[pos : pos + size])
 
+
+#
+# Copyright (c) 2009 Forest Belton
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+def extractElf(elfFile):
+    elfFile.seek(0)
+    hdr = elfFile.read(52)
+
+    if len(hdr) != 52:
+        raise ValueError("failed to read firm header")
+
+    ident, e_type, machine, version, entry, phoff, shoff, e_flags, ehsize, \
+    phentsize, phnum, shentsize, shnum, shstrndx = unpack("<16s2H5I6H", hdr)
+
+    if machine != 40:
+        raise ValueError("machine type not ARM")
+
+    if version != 1:
+        raise ValueError("invalid ELF version")
+
+    if ehsize != 52:
+        raise ValueError("invalid ELF header size")
+
+    if phnum == 0:
+        raise ValueError("no program headers")
+
+    elfFile.seek(phoff)
+    addr, sz = 0, 0
+    datalst = []
+    for i in range(phnum):
+        phdr = elfFile.read(32)
+        p_type, offset, vaddr, paddr, filesz, memsz, p_flags, p_align = unpack("<8I", phdr)
+        if p_type != 1 or filesz == 0: # not loadable or BSS
+            continue
+
+        # Use first found address and read contiguous sections
+        if addr == 0:
+            addr = paddr
+        else:
+            if paddr != addr + size:
+                continue
+
+        elfFile.seek(offset)
+        pdata = elfFile.read(filesz)
+        if len(pdata) != filesz:
+            raise ValueError("failed to read program header segment")
+        datalst.append(pdata)
+        datalst.append(b'\x00' * (memsz - filesz))
+
+        sz += memsz
+
+    return entry, addr, b''.join(datalst)
+
 class FirmSectionHeader(object):
     def check(self):
         off = self.offset
@@ -65,12 +137,12 @@ class FirmSectionHeader(object):
         if not (data is None): self.check()
 
     def setData(self, data):
-        self.sectionData = data
-        self.size = len(data)
+        self.sectionData = data + b'\xFF' * (16 - (len(data) % 16))
+        self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
         H = SHA256.new()
-        H.update(data)
+        H.update(self.sectionData)
         self.hash = H.digest()
 
     def buildHeader(self):
@@ -158,7 +230,7 @@ class Firm(object):
             self.reserved, self.signature = b'\x00'* 0x30, b'\x00'* 0x100
         else:
             if data[:4] != b"FIRM":
-                raise RuntimeError("Not a FIRM file")
+                raise ValueError("Not a FIRM file")
 
             self.priority, self.arm11Entrypoint, self.arm9Entrypoint, self.reserved = unpack_from("<3I48s", data, 4)
             self.sections = [FirmSectionHeader(i, data) for i in range(4)]
@@ -205,28 +277,53 @@ def extractFirm(args):
     firmObj.export(args.outdir, args.export_modules, None if args.secret_sector is None else args.secret_sector.read())
 
 def buildFirm(args):
-    if not (len(args.section_addresses) == len(args.section_data) == len(args.section_copy_methods)):
-        raise argparse.ArgumentError("number of sections not matching")
+    if not (len(args.section_data) == len(args.section_copy_methods)):
+        raise ValueError("number of sections not matching")
     elif len(args.section_addresses) > 4 or len(args.section_data) > 4 or len(args.section_copy_methods) > 4:
-        raise argparse.ArgumentError("too many sections")
+        raise ValueError("too many sections")
+
+    addrpos = 0
 
     firmObj = Firm()
     firmObj.arm9Entrypoint = args.arm9_entrypoint
     firmObj.arm11Entrypoint = args.arm11_entrypoint
 
-    for i in range(len(args.section_addresses)):
-        firmObj.sections[i].address = args.section_addresses[i]
-        firmObj.sections[i].copyMethod = ("NDMA", "XDMA", "memcpy").index(args.section_copy_methods[i])
-        firmObj.setSectionData(i, args.section_data[i].read())
+    for i in range(len(args.section_copy_methods)):
+        magic = args.section_data[i].read(4)
+        args.section_data[i].seek(0)
+
+        if len(magic) == 4 and magic == b"\x7FELF":
+            entry, firmObj.sections[i].address, data = extractElf(args.section_data[i])
+            firmObj.arm9Entrypoint = entry if firmObj.arm9Entrypoint == 0 and args.section_copy_methods[i] == "NDMA" else firmObj.arm9Entrypoint
+            firmObj.arm11Entrypoint = entry if firmObj.arm11Entrypoint == 0 and args.section_copy_methods[i] == "XDMA" else firmObj.arm11Entrypoint
+            firmObj.setSectionData(i, data)
+        else:
+            if addrpos >= len(args.section_addresses):
+                raise argparse.ArgumentError("missing section addresses")
+            firmObj.sections[i].address = args.section_addresses[addrpos]
+            firmObj.sections[i].copyMethod = ("NDMA", "XDMA", "memcpy").index(args.section_copy_methods[i])
+            firmObj.setSectionData(i, args.section_data[i].read())
+            addrpos += 1
 
     firmObj.check()
     if not firmObj.arm9EntrypointFound:
-        raise argparse.ArgumentError("invalid ARM9 entrypoint")
+        raise ValueError("invalid or missing ARM9 entrypoint")
 
     if not firmObj.arm11EntrypointFound:
-        raise argparse.ArgumentError("invalid ARM11 entrypoint")
+        raise ValueError("invalid or missing ARM11 entrypoint")
 
     args.outfile.write(firmObj.build())
+
+def Uint32(s):
+    N = 0
+    try:
+        N = int(s, base=0)
+    except:
+        raise argparse.ArgumentTypeError("invalid unsigned 32-bit integer")
+
+    if not(0 <= int(N) < 2**32):
+        raise argparse.ArgumentTypeError("invalid unsigned 32-bit integer")
+    return N
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="firmtool", description="Parses, extracts, and builds 3DS firmware files.")
@@ -248,10 +345,13 @@ if __name__ == "__main__":
     parser_build = subparsers.add_parser("build")
     parser_build.set_defaults(func=buildFirm)
     parser_build.add_argument("outfile", help="Output firmware file", type=argparse.FileType("wb+"))
-    parser_build.add_argument("-n", "--arm9-entrypoint", help="ARM9 entrypoint (required)", type=int, required=True) # "nine"
-    parser_build.add_argument("-e", "--arm11-entrypoint", help="ARM11 entrypoint (required)", type=int, required=True) # "eleven"
+    parser_build.add_argument("-n", "--arm9-entrypoint", help="ARM9 entrypoint (deduced from the first ELF file having an entrypoint and corresponding to a NDMA-copied \
+    section, otherwise required)", type=Uint32, default=0) # "nine"
+    parser_build.add_argument("-e", "--arm11-entrypoint", help="ARM11 entrypoint (deduced from the first ELF file having and entrypoint and corresponding to a XDMA-copied \
+    section, otherwise required)", type=Uint32, default=0) # "eleven"
     parser_build.add_argument("-D", "--section-data", help="Files containing the data of each section (required)", type=argparse.FileType("rb"), nargs='+', required=True)
-    parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (required)", type=int, nargs='+', required=True)
+    parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (inferred from the corresponding ELF file, otherwise required)",
+    type=Uint32, nargs='+', default=[])
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
 
     args = parser.parse_args()
