@@ -173,7 +173,7 @@ class FirmSectionHeader(object):
             keyY = self.sectionData[0x10 : 0x20]
 
             ctr = int(hexlify(self.sectionData[0x20 : 0x30]), 16)
-            key = unhexlify("{0:16X}".format(keyscrambler(int(hexlify(keyX), 16), int(hexlify(keyY), 16))))
+            key = unhexlify("{0:032X}".format(keyscrambler(int(hexlify(keyX), 16), int(hexlify(keyY), 16))))
 
             sizeDec = self.sectionData[0x30 : 0x38].decode("ascii")
             size = int(sizeDec[:sizeDec.find('\x00')])
