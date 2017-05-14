@@ -12,9 +12,9 @@ Parses, extracts, and builds 3DS firmware files
 from struct import pack, unpack, unpack_from
 from binascii import hexlify, unhexlify
 
-from Crypto.Cipher import AES
-from Crypto.Hash import SHA256
-from Crypto.Util import Counter
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
 import argparse
 import sys
 import os
@@ -123,9 +123,9 @@ class FirmSectionHeader(object):
             if self.sectionData[0x100 : 0x104] == b"NCCH":
                 self.guessedType = "Kernel11 modules"
 
-        H = SHA256.new()
+        H = hashes.Hash(hashes.SHA256(), backend=default_backend())
         H.update(self.sectionData)
-        self.hashIsValid = self.hash == H.digest()
+        self.hashIsValid = self.hash == H.finalize()
 
     def __init__(self, n, data = None):
         self.num = n
@@ -141,9 +141,9 @@ class FirmSectionHeader(object):
         self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
-        H = SHA256.new()
+        H = hashes.Hash(hashes.SHA256(), backend=default_backend())
         H.update(self.sectionData)
-        self.hash = H.digest()
+        self.hash = H.finalize()
 
     def buildHeader(self):
         return pack("<4I32s", self.offset, self.address, self.size, self.copyMethod, self.hash)
@@ -169,7 +169,9 @@ class FirmSectionHeader(object):
             encKeyX = self.sectionData[:0x10] if self.guessedType[3] == '0' else self.sectionData[0x60 : 0x70]
             key0x11 = secretSector[:0x10] if self.guessedType[3] != '2' else secretSector[0x10 : 0x20]
 
-            keyX = AES.new(key0x11, AES.MODE_ECB).decrypt(encKeyX)
+            de = Cipher(algorithms.AES(key0x11), modes.ECB(), backend=default_backend()).decryptor()
+            keyX = de.update(encKeyX) + de.finalize()
+
             keyY = self.sectionData[0x10 : 0x20]
 
             ctr = int(hexlify(self.sectionData[0x20 : 0x30]), 16)
@@ -180,9 +182,8 @@ class FirmSectionHeader(object):
 
             data = self.sectionData
             if 0x800 + size <= self.size:
-                data = self.sectionData[:0x800] + \
-                       AES.new(key, AES.MODE_CTR, counter= Counter.new(128, initial_value=ctr)).decrypt(self.sectionData[0x800 : 0x800 + size]) + \
-                       self.sectionData[0x800+size:]
+                de = Cipher(algorithms.AES(key), modes.CTR(ctr), backend=default_backend()).decryptor()
+                data = self.sectionData[:0x800] + de.update(self.sectionData[0x800 : 0x800 + size]) + de.finalize() + self.sectionData[0x800+size:] 
                 exportP9(basePath, data)
 
             with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:

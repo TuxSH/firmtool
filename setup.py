@@ -30,6 +30,6 @@ setup(name='firmtool',
         "Topic :: Utilities",
         "License :: OSI Approved :: BSD License",
     ],
-    requires=['pycrypto'],
-    scripts=['firmtool']
+    requires=['cryptography'],
+    scripts=['firmtool', 'firmtool.py']
 )
