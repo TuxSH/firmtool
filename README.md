@@ -47,6 +47,8 @@ Building a firmware binary (for example with two sections, an ARM9 and and ARM11
 firmtool build firmtest.bin -n 0x08006800 -e 0x1FF80000 -D arm9.bin arm11.bin -A 0x08006800 0x1FF80000 -C NDMA XDMA
 ```
 
+You may also use ELF files, in this case the entrypoint for the given processor is deduced automatically, when applicable (using the first NDMA FIRM section for arm9, and the first XDMA FIRM section for arm11), as well as the addresses of such FIRM sections (using the first loadable ELF sections, and assuming contiguity).
+
 ## Installation
 
 On Windows, install Python >= 3.4 using the installer provided by the official Python website. Make sure that `pip` is in `PATH` then run `pip install pycrypto`.
