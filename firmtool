@@ -137,7 +137,7 @@ class FirmSectionHeader(object):
         if not (data is None): self.check()
 
     def setData(self, data):
-        self.sectionData = data + b'\xFF' * (16 - (len(data) % 16))
+        self.sectionData = data + b'\xFF' * (512 - (len(data) % 512))
         self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
@@ -174,7 +174,7 @@ class FirmSectionHeader(object):
 
             keyY = self.sectionData[0x10 : 0x20]
 
-            ctr = int(hexlify(self.sectionData[0x20 : 0x30]), 16)
+            ctr = self.sectionData[0x20 : 0x30]
             key = unhexlify("{0:032X}".format(keyscrambler(int(hexlify(keyX), 16), int(hexlify(keyY), 16))))
 
             sizeDec = self.sectionData[0x30 : 0x38].decode("ascii")
@@ -310,7 +310,7 @@ def buildFirm(args):
     if not firmObj.arm9EntrypointFound:
         raise ValueError("invalid or missing ARM9 entrypoint")
 
-    if not firmObj.arm11EntrypointFound:
+    if not (firmObj.arm11Entrypoint == 0 or firmObj.arm11EntrypointFound):  # bootrom / FIRM won't boot firms with a NULL arm11 ep, though
         raise ValueError("invalid or missing ARM11 entrypoint")
 
     args.outfile.write(firmObj.build())

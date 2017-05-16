@@ -18,6 +18,11 @@ elif sys.version_info[0] == 3 and sys.version_info[1] < 2:
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
+ft = 'firmtool'
+if os.name == 'nt':
+    open('firmtool.py', 'w').write(open('firmtool', 'r').read())
+    ft = 'firmtool.py'
+
 setup(name='firmtool',
     version='0.1',
     description='Parses, extracts, and builds 3DS firmware files',
@@ -31,5 +36,5 @@ setup(name='firmtool',
         "License :: OSI Approved :: BSD License",
     ],
     requires=['cryptography'],
-    scripts=['firmtool', 'firmtool.py']
+    scripts=[ft]
 )
