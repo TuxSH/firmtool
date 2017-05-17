@@ -43,16 +43,23 @@ cd ..
 
 
 Building a firmware binary (for example with two sections, an ARM9 and and ARM11 one, with the entrypoints at the start of the respective sections):
-```
+
+```bash
 firmtool build firmtest.bin -n 0x08006800 -e 0x1FF80000 -D arm9.bin arm11.bin -A 0x08006800 0x1FF80000 -C NDMA XDMA
+```
+
+Building a firmware binary from an arm9loaderhax.bin payload which doesn't use the ARM11, with a loader supporting the ARM11 entrypoint being 0:
+
+```bash
+firmtool build firmtest.bin -n 0x23F00000 -e 0 -D arm9loaderhax.bin -A 0x23F00000 -C NDMA
 ```
 
 You may also use ELF files, in this case the entrypoint for the given processor is deduced automatically, when applicable (using the first NDMA FIRM section for arm9, and the first XDMA FIRM section for arm11), as well as the addresses of such FIRM sections (using the first loadable ELF sections, and assuming contiguity).
 
 ## Installation
 
-On Windows, install Python >= 3.4 using the installer provided by the official Python website. Make sure that `pip` is in `PATH` then run `pip install pycrypto`.
+On Windows, install Python >= 3.4 using the installer provided by the official Python website. Make sure that `pip` is in `PATH` then run `pip install cryptography` as administrator.
 
-On *ix, install the corresponding packages, they should be named `python`, `python-setuptools`, `python-pip`, `python-crypto` or similar.
+On *ix, install the corresponding packages, they should be named `python`, `python-setuptools`, `python-pip` or similar. If your distribution provides it, install `python-cryptography` as well, otherwise run `pip install cryptography` as `root`.
 
-In either case, run `python setup.py install` with the correct permissions. 
+In either case, run `python setup.py install` with the correct permissions. If you have git, you can just run `pip install git+https://github.com/TuxSH/firmtool.git` directly.

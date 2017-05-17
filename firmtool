@@ -202,12 +202,12 @@ class FirmSectionHeader(object):
     def __str__(self):
         types = ("NDMA", "XDMA", "memcpy")
         return """Copy type:\t{0}{1}
-Offset:\t\t0x{2:08X}
-Address:\t0x{3:08X}
-Size:\t\t0x{4:08X}
-Hash:\t\t{5:032X}{6}""".format(types[self.copyMethod] if 0 <= self.copyMethod <= 2 else "invalid ({0})".format(self.copyMethod),
+Offset:\t\t0x{2:08X}{3}
+Address:\t0x{4:08X}
+Size:\t\t0x{5:08X}
+Hash:\t\t{6:032X}{7}""".format(types[self.copyMethod] if 0 <= self.copyMethod <= 2 else "invalid ({0})".format(self.copyMethod),
         "\nGuessed type:\t{0}".format(self.guessedType) if self.guessedType else "",
-        self.offset, self.address, self.size, int(hexlify(self.hash), 16), " (invalid)" if not self.hashIsValid else "")
+        self.offset, "" if self.offset >= 0x200 else "invalid", self.address, self.size, int(hexlify(self.hash), 16), " (invalid)" if not self.hashIsValid else "")
 
 
 class Firm(object):
@@ -262,7 +262,7 @@ ARM11 entrypoint:\t0x{3:08X}{4}
 RSA-2048 signature:\t{5:0256X}
 
 """.format(self.priority, self.arm9Entrypoint, " (invalid)" if not self.arm9EntrypointFound else "",
-                   self.arm11Entrypoint, " (invalid)" if not self.arm11EntrypointFound else "", int(hexlify(self.signature), 16))
+                   self.arm11Entrypoint, " (invalid)" if not (self.arm11Entrypoint == 0 or self.arm11EntrypointFound) else "", int(hexlify(self.signature), 16))
 
         #fmt_section = lambda n: "Section {0}:\n{1}".format(n), str(self.sections[n])))
         secs = '\n\n'.join("Section {0}:\n{1}".format(i, ''.join('\t' + l for l in str(self.sections[i]).splitlines(True)))
