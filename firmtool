@@ -19,6 +19,16 @@ import argparse
 import sys
 import os
 
+
+perfectSignatures = {
+    "firm-nand-retail": "0" * 512, 
+    "ncsd-retail": "0" * 512,
+    "firm-spi-retail": "0" * 512,
+    "firm-nand-dev": "0" * 512,
+    "ncsd-dev": "0" * 512,
+    "firm-spi-dev": "0" * 512,
+}
+
 def keyscrambler(keyX, keyY):
     #http://www.falatic.com/index.php/108/python-and-bitwise-rotation
     rol = lambda val, r_bits, max_bits: \
@@ -312,8 +322,15 @@ def buildFirm(args):
 
     if not (firmObj.arm11Entrypoint == 0 or firmObj.arm11EntrypointFound):  # bootrom / FIRM won't boot firms with a NULL arm11 ep, though
         raise ValueError("invalid or missing ARM11 entrypoint")
-
-    args.outfile.write(firmObj.build())
+    
+    if args.signature is not None:
+        firmObj.signature = unhexlify(perfectSignatures["firm-" + args.signature])
+    data = firmObj.build()
+    args.outfile.write(data)
+    with open(args.outfile.name + ".sha", "wb+") as f:
+        H = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        H.update(data)
+        f.write(H.finalize())
 
 def Uint32(s):
     N = 0
@@ -354,6 +371,8 @@ if __name__ == "__main__":
     parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (inferred from the corresponding ELF file, otherwise required)",
     type=Uint32, nargs='+', default=[])
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
+    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"))
+    parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true")
 
     args = parser.parse_args()
 
