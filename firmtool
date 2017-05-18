@@ -328,7 +328,7 @@ def buildFirm(args):
     if not (firmObj.arm11Entrypoint == 0 or firmObj.arm11EntrypointFound):  # bootrom / FIRM won't boot firms with a NULL arm11 ep, though
         raise ValueError("invalid or missing ARM11 entrypoint")
     
-    if args.signature is not None:
+    if args.signature:
         firmObj.signature = unhexlify(perfectSignatures["firm-" + args.signature])
     data = firmObj.build()
     args.outfile.write(data)
