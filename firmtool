@@ -225,8 +225,10 @@ class Firm(object):
         self.arm11EntrypointFound, self.arm9EntrypointFound = False, False
         for i in range(4):
             sec = self.sections[i]
-            self.arm11EntrypointFound = self.arm11EntrypointFound or sec.address <= self.arm11Entrypoint < sec.address + sec.size
-            self.arm9EntrypointFound = self.arm9EntrypointFound or sec.address <= self.arm9Entrypoint < sec.address + sec.size
+            if sec.address <= self.arm11Entrypoint < sec.address + sec.size:
+                self.arm11EntrypointFound = True
+            if sec.address <= self.arm9Entrypoint < sec.address + sec.size:
+                self.arm9EntrypointFound = True
             sec.check()
 
     def export(self, basePath, exportModules = False, secretSector = None):
@@ -298,6 +300,9 @@ def buildFirm(args):
     firmObj = Firm()
     firmObj.arm9Entrypoint = args.arm9_entrypoint
     firmObj.arm11Entrypoint = args.arm11_entrypoint
+
+    if args.suggest_screen_init:
+        firmObj.reserved[0] |= 1
 
     for i in range(len(args.section_copy_methods)):
         magic = args.section_data[i].read(4)
@@ -373,7 +378,7 @@ if __name__ == "__main__":
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
     parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"))
     parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true")
-
+    parser_build.add_argument("-i", "--suggest-screen-init", help="Suggest that screen init should be done before launching the output file", action="store_true")
     args = parser.parse_args()
 
     # http://bugs.python.org/issue16308 it's still not fixed, WTF are they doing ?!
