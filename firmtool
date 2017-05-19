@@ -302,7 +302,7 @@ def buildFirm(args):
     firmObj.arm11Entrypoint = args.arm11_entrypoint
 
     if args.suggest_screen_init:
-        firmObj.reserved = unhexlify("{0:02x}".format(int(hexlify(firmObj.reserved[0])) | 1)) + firmObj.reserved[1:]
+        firmObj.reserved = unhexlify("{0:02x}".format(int(hexlify(firmObj.reserved[0:1])) | 1)) + firmObj.reserved[1:]
 
     for i in range(len(args.section_copy_methods)):
         magic = args.section_data[i].read(4)
