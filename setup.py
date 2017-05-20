@@ -24,7 +24,7 @@ if os.name == 'nt':
     ft = 'firmtool.py'
 
 setup(name='firmtool',
-    version='0.1',
+    version='1.0',
     description='Parses, extracts, and builds 3DS firmware files',
     license='BSD',
     keywords='3DS firmware parse extract build',
