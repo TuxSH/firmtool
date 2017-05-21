@@ -359,7 +359,7 @@ def buildFirm(args):
     if args.suggest_screen_init:
         arm11Flags |= 1
 
-    if args.suggest_skipping_bootrom_lockout
+    if args.suggest_skipping_bootrom_lockout:
         arm11Flags |= 2
 
     firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:]
