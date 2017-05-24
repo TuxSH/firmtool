@@ -12,9 +12,6 @@ Parses, extracts, and builds 3DS firmware files
 from struct import pack, unpack, unpack_from
 from binascii import hexlify, unhexlify
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
 import argparse
 import sys
 import os
@@ -175,6 +172,9 @@ def extractElf(elfFile):
 
 class FirmSectionHeader(object):
     def check(self):
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import hashes
+
         off = self.offset
         if self.copyMethod == 0 and (1 << 20) > self.size >= 0x800+0xA00 and self.address == 0x08006000:
             if self.sectionData[0x50 : 0x53] == b"K9L":
@@ -201,6 +201,9 @@ class FirmSectionHeader(object):
         if not (data is None): self.check()
 
     def setData(self, data):
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import hashes
+
         self.sectionData = data + b'\xFF' * (512 - (len(data) % 512))
         self.size = len(self.sectionData)
         self.guessedType = ''
@@ -230,6 +233,8 @@ class FirmSectionHeader(object):
                 f.write(self.sectionData)
 
         elif self.guessedType.startswith("K9L") and secretSector is not None:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
             encKeyX = self.sectionData[:0x10] if self.guessedType[3] == '0' else self.sectionData[0x60 : 0x70]
             key0x11 = secretSector[:0x10] if self.guessedType[3] != '2' else secretSector[0x10 : 0x20]
 
@@ -370,6 +375,7 @@ def buildFirm(args):
 
         if len(magic) == 4 and magic == b"\x7FELF":
             entry, firmObj.sections[i].address, data = extractElf(args.section_data[i])
+            firmObj.sections[i].copyMethod = ("NDMA", "XDMA", "memcpy").index(args.section_copy_methods[i])
             firmObj.arm9Entrypoint = entry if firmObj.arm9Entrypoint == 0 and args.section_copy_methods[i] == "NDMA" else firmObj.arm9Entrypoint
             firmObj.arm11Entrypoint = entry if firmObj.arm11Entrypoint == 0 and args.section_copy_methods[i] == "XDMA" else firmObj.arm11Entrypoint
             firmObj.setSectionData(i, data)
@@ -411,6 +417,7 @@ def Uint32(s):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="firmtool", description="Parses, extracts, and builds 3DS firmware files.")
+    parser.add_argument("-v", "--version", action="version", version="%(prog)s " + __version__)
     subparsers = parser.add_subparsers(help="sub-command help")
 
     parser_parse = subparsers.add_parser("parse")
@@ -437,7 +444,7 @@ if __name__ == "__main__":
     parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (inferred from the corresponding ELF file, otherwise required)",
     type=Uint32, nargs='+', default=[])
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
-    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"))
+    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
     parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true", default=False)
     parser_build.add_argument("-i", "--suggest-screen-init", help="Suggest that screen init should be done before launching the output file", action="store_true", default=False)
     parser_build.add_argument("-b", "--suggest-skipping-bootrom-lockout", help="Suggest skipping bootrom lockout", action="store_true", default=False)
