@@ -62,4 +62,6 @@ On Windows, install Python >= 3.4 using the installer provided by the official P
 
 On *ix, install the corresponding packages, they should be named `python`, `python-setuptools`, `python-pip` or similar. If your distribution provides it, install `python-cryptography` as well, otherwise run `pip install cryptography` as `root`.
 
-In either case, run `python setup.py install` with the correct permissions. If you have git, you can just run `pip install git+https://github.com/TuxSH/firmtool.git` directly.
+On Linux distribution having severly outdated packages such as Debian, run `pip install --upgrade pip setuptools pyparsing`.
+
+In all cases, run `python setup.py install` with the correct permissions. If you have git, you can just run `pip install git+https://github.com/TuxSH/firmtool.git` directly.
