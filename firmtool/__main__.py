@@ -415,7 +415,7 @@ def Uint32(s):
         raise argparse.ArgumentTypeError("invalid unsigned 32-bit integer")
     return N
 
-if __name__ == "__main__":
+def main(args=None):
     parser = argparse.ArgumentParser(prog="firmtool", description="Parses, extracts, and builds 3DS firmware files.")
     parser.add_argument("-v", "--version", action="version", version="%(prog)s " + __version__)
     subparsers = parser.add_subparsers(help="sub-command help")
@@ -459,3 +459,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     args.func(args)
+
+if __name__ == "__main__":
+    main()
