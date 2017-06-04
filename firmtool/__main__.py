@@ -3,7 +3,7 @@
 __author__    = "TuxSH"
 __copyright__ = "Copyright (c) 2017 TuxSH"
 __license__   = "BSD"
-__version__   = "1.0"
+__version__   = "1.1"
 
 """
 Parses, extracts, and builds 3DS firmware files

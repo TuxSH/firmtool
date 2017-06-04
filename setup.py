@@ -19,7 +19,7 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 setup(name='firmtool',
-    version='1.0',
+    version='1.1',
     description='Parses, extracts, and builds 3DS firmware files',
     license='BSD',
     keywords='3DS firmware parse extract build',
