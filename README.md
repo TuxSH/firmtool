@@ -11,7 +11,7 @@ On *ix, install the corresponding packages, they should be named `python`, `pyth
 
 On Linux distribution having severly outdated packages such as Debian, run `pip install --upgrade pip setuptools pyparsing`.
 
-In all cases, run `python setup.py install` with the correct permissions. If you have git, you can just run `pip install git+https://github.com/TuxSH/firmtool.git` directly.
+The preferred way to install firmtool is to run `pip install git+https://github.com/TuxSH/firmtool.git` directly (with the appropriate permissions), although `python setup.py install` should work as well.
 
 ## Usage
 Showing information about a firmware binary:
