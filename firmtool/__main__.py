@@ -400,6 +400,9 @@ def buildFirm(args):
     args.outfile.write(data)
     if args.generate_hash:
         with open(args.outfile.name + ".sha", "wb+") as f:
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives import hashes
+
             H = hashes.Hash(hashes.SHA256(), backend=default_backend())
             H.update(data)
             f.write(H.finalize())
