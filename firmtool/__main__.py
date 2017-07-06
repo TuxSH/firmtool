@@ -217,7 +217,7 @@ class FirmSectionHeader(object):
         from cryptography.hazmat.backends import default_backend
         from cryptography.hazmat.primitives import hashes
 
-        self.sectionData = data + b'\xFF' * (((len(data) + 511) % 512) - len(data))
+        self.sectionData = data + b'\xFF' *  ((512 - (len(data) % 512)) % 512)
         self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
