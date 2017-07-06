@@ -98,7 +98,6 @@ def exportP9(basePath, data):
     with open(os.path.join(basePath, "modules", "Process9.cxi"), "wb+") as f:
         f.write(data[pos : pos + size])
 
-
 #
 # Copyright (c) 2009 Forest Belton
 #
@@ -191,23 +190,38 @@ class FirmSectionHeader(object):
         H.update(self.sectionData)
         self.hashIsValid = self.hash == H.finalize()
 
-    def __init__(self, n, data = None):
+    def doNtrCrypto(self, encrypt = True):
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        iv = pack("<4I", self.offset, self.address, self.size, self.size)
+        key = "07550C970C3DBD9EDDA9FB5D4C7FB713" if self.kind == "spi-retail" else "4DAD2124C2D32973100FBFBD1604C6F1"
+        cipher = Cipher(algorithms.AES(unhexlify(key)), modes.CBC(iv), backend=default_backend())
+        obj = cipher.encryptor() if encrypt else cipher.decryptor()
+        return obj.update(self.sectionData) + obj.finalize()
+
+    def __init__(self, n, kind = "nand-retail", data = None):
         self.num = n
         hdrData = b'\x00'* 0x30 if data is None else data[0x40 + 0x30 * n : 0x40 + 0x30 * (n + 1)]
         self.offset, self.address, self.size, self.copyMethod, self.hash = unpack("<4I32s", hdrData)
         self.sectionData = b'' if self.size == 0 else data[self.offset : self.offset + self.size]
         self.guessedType = ''
         self.hashIsValid = True
-        if not (data is None): self.check()
+        self.kind = kind
+        if not (data is None):
+            if self.kind in ("spi-retail", "spi-dev"):
+                self.sectionData = self.doNtrCrypto(False)
+            self.check()
 
     def setData(self, data):
         from cryptography.hazmat.backends import default_backend
         from cryptography.hazmat.primitives import hashes
 
-        self.sectionData = data + b'\xFF' * (512 - (len(data) % 512))
+        self.sectionData = data + b'\xFF' * (((len(data) + 511) % 512) - len(data))
         self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
+
         H = hashes.Hash(hashes.SHA256(), backend=default_backend())
         H.update(self.sectionData)
         self.hash = H.finalize()
@@ -233,6 +247,7 @@ class FirmSectionHeader(object):
                 f.write(self.sectionData)
 
         elif self.guessedType.startswith("K9L") and secretSector is not None:
+            from cryptography.hazmat.backends import default_backend
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
             encKeyX = self.sectionData[:0x10] if self.guessedType[3] == '0' else self.sectionData[0x60 : 0x70]
@@ -252,7 +267,7 @@ class FirmSectionHeader(object):
             data = self.sectionData
             if 0x800 + size <= self.size:
                 de = Cipher(algorithms.AES(key), modes.CTR(ctr), backend=default_backend()).decryptor()
-                data = self.sectionData[:0x800] + de.update(self.sectionData[0x800 : 0x800 + size]) + de.finalize() + self.sectionData[0x800+size:] 
+                data = b''.join((self.sectionData[:0x800], de.update(self.sectionData[0x800 : 0x800 + size]), de.finalize(), self.sectionData[0x800+size:]))
                 exportP9(basePath, data)
 
             with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
@@ -295,17 +310,18 @@ class Firm(object):
             if self.sections[i].size != 0:
                 self.sections[i].export(basePath, exportModules, secretSector)
 
-    def __init__(self, data = None):
+    def __init__(self, kind = "nand-retail", data = None):
+        self.kind = kind
         if data is None:
             self.priority, self.arm11Entrypoint, self.arm9Entrypoint = 0, 0, 0
-            self.sections = [FirmSectionHeader(i) for i in range(4)]
+            self.sections = [FirmSectionHeader(i, kind) for i in range(4)]
             self.reserved, self.signature = b'\x00'* 0x30, b'\x00'* 0x100
         else:
             if data[:4] != b"FIRM":
                 raise ValueError("Not a FIRM file")
 
             self.priority, self.arm11Entrypoint, self.arm9Entrypoint, self.reserved = unpack_from("<3I48s", data, 4)
-            self.sections = [FirmSectionHeader(i, data) for i in range(4)]
+            self.sections = [FirmSectionHeader(i, kind, data) for i in range(4)]
             self.signature = data[0x100 : 0x200]
             self.check()
 
@@ -321,7 +337,7 @@ class Firm(object):
     def build(self):
         hdr1 = pack("<3I48s", self.priority, self.arm11Entrypoint, self.arm9Entrypoint, self.reserved)
         hdr2 = b''.join(self.sections[i].buildHeader() for i in range(4))
-        secs = b''.join(self.sections[i].sectionData for i in range(4))
+        secs = b''.join((self.sections[i].doNtrCrypto() if self.kind in ("spi-retail", "spi-dev") else self.sections[i].sectionData) for i in range(4))
         return b''.join((b"FIRM", hdr1, hdr2, self.signature, secs))
 
     def __str__(self):
@@ -342,10 +358,10 @@ RSA-2048 signature:\t{5:0256X}
 
 
 def parseFirm(args):
-    print(Firm(args.infile.read()))
+    print(Firm(args.type if args.type else "nand-retail", args.infile.read()))
 
 def extractFirm(args):
-    firmObj = Firm(args.infile.read())
+    firmObj = Firm(args.type if args.type else "nand-retail", args.infile.read())
     firmObj.export(args.outdir, args.export_modules, None if args.secret_sector is None else args.secret_sector.read())
 
 def buildFirm(args):
@@ -354,9 +370,13 @@ def buildFirm(args):
     elif len(args.section_addresses) > 4 or len(args.section_data) > 4 or len(args.section_copy_methods) > 4:
         raise ValueError("too many sections")
 
+    if (not args.signature) and args.type:
+        args.signature = args.type
+
     addrpos = 0
 
-    firmObj = Firm()
+    firmObj = Firm(args.signature) if args.signature else Firm()
+
     firmObj.arm9Entrypoint = args.arm9_entrypoint
     firmObj.arm11Entrypoint = args.arm11_entrypoint
 
@@ -367,7 +387,11 @@ def buildFirm(args):
     if args.suggest_skipping_bootrom_lockout:
         arm11Flags |= 2
 
-    firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:]
+    if args.b9s is not None:
+        magicver = unhexlify("{0:02x}".format(args.b9s & 0xFF)) + b"B9S"
+        firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:0x2C] + magicver
+    else:
+        firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:]
 
     for i in range(len(args.section_copy_methods)):
         magic = args.section_data[i].read(4)
@@ -426,11 +450,13 @@ def main(args=None):
     parser_parse = subparsers.add_parser("parse")
     parser_parse.set_defaults(func=parseFirm)
     parser_parse.add_argument("infile", type=argparse.FileType("rb"))
+    parser_parse.add_argument("-t", "--type", help="The kind of FIRM to assume (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
 
     parser_extract = subparsers.add_parser("extract")
     parser_extract.set_defaults(func=extractFirm)
     parser_extract.add_argument("infile", help="Input firmware file", type=argparse.FileType("rb"))
     parser_extract.add_argument("outdir", help="Output directory (current directory by default)", nargs='?', default='.')
+    parser_extract.add_argument("-t", "--type", help="The kind of FIRM to assume (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
     parser_extract.add_argument("-m", "--export-modules", help="Export k11 modules and Process9 (when applicable and if possible)",
                                 action="store_true")
     parser_extract.add_argument("-s", "--secret-sector", help="Path to decrypted secret sector, to decrypt the arm9 binary (when applicable)",
@@ -447,10 +473,12 @@ def main(args=None):
     parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (inferred from the corresponding ELF file, otherwise required)",
     type=Uint32, nargs='+', default=[])
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
-    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
+    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
+    parser_build.add_argument("-t", "--type", help="Same as --signature", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
     parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true", default=False)
     parser_build.add_argument("-i", "--suggest-screen-init", help="Suggest that screen init should be done before launching the output file", action="store_true", default=False)
     parser_build.add_argument("-b", "--suggest-skipping-bootrom-lockout", help="Suggest skipping bootrom lockout", action="store_true", default=False)
+    parser_build.add_argument("--b9s", help="Sets the b9s magic and version", type=int)
 
     args = parser.parse_args()
 
