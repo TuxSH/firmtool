@@ -30,7 +30,7 @@ setup(name='firmtool',
         "Topic :: Utilities",
         "License :: OSI Approved :: BSD License",
     ],
-    requires=['cryptography'],
+    install_requires=['cryptography'],
     packages=['firmtool'],
     entry_points={ "console_scripts": [ "firmtool=firmtool.__main__:main" ] }
 )
