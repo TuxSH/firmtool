@@ -80,6 +80,16 @@ perfectSignatures = {
     ),
 }
 
+secretSectorKey1Key2 = {
+    "retail": "07294438F8C97593AA0E4AB4AE84C1D8423F817A235258316E758E3A39432ED0",
+    "dev"   : "A2F4003C7A951025DF4E9E74E30C9299FF77A09A9981E948EC51C9325D14EC25",
+}
+
+spiCryptoKey = {
+    "retail": "07550C970C3DBD9EDDA9FB5D4C7FB713",
+    "dev"   : "4DAD2124C2D32973100FBFBD1604C6F1",
+}
+
 def keyscrambler(keyX, keyY):
     #http://www.falatic.com/index.php/108/python-and-bitwise-rotation
     rol = lambda val, r_bits, max_bits: \
@@ -195,7 +205,7 @@ class FirmSectionHeader(object):
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
         iv = pack("<4I", self.offset, self.address, self.size, self.size)
-        key = "07550C970C3DBD9EDDA9FB5D4C7FB713" if self.kind == "spi-retail" else "4DAD2124C2D32973100FBFBD1604C6F1"
+        key = spiCryptoKey.get(self.kind.split('-')[-1], "retail")
         cipher = Cipher(algorithms.AES(unhexlify(key)), modes.CBC(iv), backend=default_backend())
         obj = cipher.encryptor() if encrypt else cipher.decryptor()
         return obj.update(self.sectionData) + obj.finalize()
@@ -361,8 +371,9 @@ def parseFirm(args):
     print(Firm(args.type if args.type else "nand-retail", args.infile.read()))
 
 def extractFirm(args):
+    keys = secretSectorKey1Key2.get(args.type.split('-')[-1], "retail") if args.secret_sector is None else args.secret_sector.read()
     firmObj = Firm(args.type if args.type else "nand-retail", args.infile.read())
-    firmObj.export(args.outdir, args.export_modules, None if args.secret_sector is None else args.secret_sector.read())
+    firmObj.export(args.outdir, args.export_modules, unhexlify(keys))
 
 def buildFirm(args):
     if not (len(args.section_data) == len(args.section_copy_methods)):
@@ -459,7 +470,7 @@ def main(args=None):
     parser_extract.add_argument("-t", "--type", help="The kind of FIRM to assume (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
     parser_extract.add_argument("-m", "--export-modules", help="Export k11 modules and Process9 (when applicable and if possible)",
                                 action="store_true")
-    parser_extract.add_argument("-s", "--secret-sector", help="Path to decrypted secret sector, to decrypt the arm9 binary (when applicable)",
+    parser_extract.add_argument("-s", "--secret-sector", help="Path to decrypted secret sector, to decrypt the arm9 binary with (when applicable) (optional, keys are harcoded)",
                                 type=argparse.FileType("rb"))
 
     parser_build = subparsers.add_parser("build")

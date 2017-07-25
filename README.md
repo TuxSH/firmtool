@@ -19,21 +19,16 @@ Showing information about a firmware binary:
 firmtool parse the.firm
 ```
 
-Basic extraction of a firmware binary:
+Extracting a firmware binary, with decryption of the arm9bin and extraction of the k11 modules as well as Process9 (by default type `nand-retail` is assumed, if it's not the case use `-t`):
 ```
-firmtool extract the.firm
-```
-
-Extracting a firmware binary, with decryption of the arm9bin and extraction of the k11 modules as well as Process9:
-```
-firmtool extract -m -s secret_sector.bin native.firm
+firmtool extract -m native.firm
 ```
 
 Same as above plus using `ctrtool` and the shell to extract the code of each module
 ```bash
 #!/bin/bash
 
-firmtool extract -m -s secret_sector.bin native.firm
+firmtool extract -m native.firm
 cd modules
 for f in *.cxi
 do
