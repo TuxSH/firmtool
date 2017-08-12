@@ -278,13 +278,15 @@ class FirmSectionHeader(object):
             if 0x800 + size <= self.size:
                 de = Cipher(algorithms.AES(key), modes.CTR(ctr), backend=default_backend()).decryptor()
                 data = b''.join((self.sectionData[:0x800], de.update(self.sectionData[0x800 : 0x800 + size]), de.finalize(), self.sectionData[0x800+size:]))
-                exportP9(basePath, data)
+                if extractModules:
+                    exportP9(basePath, data)
 
             with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
                 f.write(data)
 
         elif self.guessedType == "Kernel9":
-            exportP9(basePath, self.sectionData)
+            if extractModules:
+                exportP9(basePath, self.sectionData)
 
             with open(os.path.join(basePath, "section{0}.bin".format(self.num)), "wb+") as f:
                 f.write(self.sectionData)
@@ -489,7 +491,6 @@ def main(args=None):
     parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true", default=False)
     parser_build.add_argument("-i", "--suggest-screen-init", help="Suggest that screen init should be done before launching the output file", action="store_true", default=False)
     parser_build.add_argument("-b", "--suggest-skipping-bootrom-lockout", help="Suggest skipping bootrom lockout", action="store_true", default=False)
-    parser_build.add_argument("--b9s", help="Sets the b9s magic and version", type=int)
 
     args = parser.parse_args()
 
