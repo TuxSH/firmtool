@@ -400,11 +400,7 @@ def buildFirm(args):
     if args.suggest_skipping_bootrom_lockout:
         arm11Flags |= 2
 
-    if args.b9s is not None:
-        magicver = unhexlify("{0:02x}".format(args.b9s & 0xFF)) + b"B9S"
-        firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:0x2C] + magicver
-    else:
-        firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:]
+    firmObj.reserved = unhexlify("{0:02x}".format(arm11Flags)) + firmObj.reserved[1:]
 
     for i in range(len(args.section_copy_methods)):
         magic = args.section_data[i].read(4)
