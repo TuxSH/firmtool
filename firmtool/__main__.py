@@ -165,7 +165,7 @@ def extractElf(elfFile):
         if addr == 0:
             addr = paddr
         else:
-            if paddr != addr + size:
+            if paddr != addr + sz:
                 continue
 
         elfFile.seek(offset)
