@@ -156,9 +156,11 @@ def extractElf(elfFile):
     addr, sz = 0, 0
     datalst = []
     for i in range(phnum):
+        elfFile.seek(52 + (i * 32))
         phdr = elfFile.read(32)
         p_type, offset, vaddr, paddr, filesz, memsz, p_flags, p_align = unpack("<8I", phdr)
-        if p_type != 1 or filesz == 0: # not loadable or BSS
+        alignedmemsz  = ((memsz + p_align - 1)//p_align) * p_align if p_align != 0 else memsz
+        if (i == 0 and p_type != 1) or filesz == 0: # not loadable or BSS
             continue
 
         # Use first found address and read contiguous sections
@@ -173,9 +175,9 @@ def extractElf(elfFile):
         if len(pdata) != filesz:
             raise ValueError("failed to read program header segment")
         datalst.append(pdata)
-        datalst.append(b'\x00' * (memsz - filesz))
+        datalst.append(b'\x00' * (alignedmemsz - filesz))
 
-        sz += memsz
+        sz += alignedmemsz
 
     return entry, addr, b''.join(datalst)
 
