@@ -3,7 +3,7 @@
 __author__    = "TuxSH"
 __copyright__ = "Copyright (c) 2017 TuxSH"
 __license__   = "BSD"
-__version__   = "1.2"
+__version__   = "1.3"
 
 """
 Parses, extracts, and builds 3DS firmware files
@@ -159,7 +159,6 @@ def extractElf(elfFile):
         elfFile.seek(52 + (i * 32))
         phdr = elfFile.read(32)
         p_type, offset, vaddr, paddr, filesz, memsz, p_flags, p_align = unpack("<8I", phdr)
-        alignedmemsz  = ((memsz + p_align - 1)//p_align) * p_align if p_align != 0 else memsz
         if (i == 0 and p_type != 1) or filesz == 0: # not loadable or BSS
             continue
 
@@ -175,9 +174,9 @@ def extractElf(elfFile):
         if len(pdata) != filesz:
             raise ValueError("failed to read program header segment")
         datalst.append(pdata)
-        datalst.append(b'\x00' * (alignedmemsz - filesz))
+        datalst.append(b'\x00' * (memsz - filesz))
 
-        sz += alignedmemsz
+        sz += memsz
 
     return entry, addr, b''.join(datalst)
 
