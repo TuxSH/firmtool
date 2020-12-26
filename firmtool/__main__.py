@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 __author__    = "TuxSH"
-__copyright__ = "Copyright (c) 2017 TuxSH"
+__copyright__ = "Copyright (c) 2017-2020 TuxSH"
 __license__   = "BSD"
-__version__   = "1.3"
+__version__   = "1.4"
 
 """
 Parses, extracts, and builds 3DS firmware files
@@ -15,6 +15,15 @@ from binascii import hexlify, unhexlify
 import argparse
 import sys
 import os
+
+# Try to import PyCryptodome
+try:
+    import Crypto # type: ignore
+except ImportError:
+    import Cryptodome as Crypto # type: ignore
+
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256
 
 # lenny
 perfectSignatures = {
@@ -141,7 +150,7 @@ def extractElf(elfFile):
     phentsize, phnum, shentsize, shnum, shstrndx = unpack("<16s2H5I6H", hdr)
 
     if machine != 40:
-        raise ValueError("machine type not ARM")
+        raise ValueError("machine type not Arm")
 
     if version != 1:
         raise ValueError("invalid ELF version")
@@ -182,10 +191,6 @@ def extractElf(elfFile):
 
 class FirmSectionHeader(object):
     def check(self):
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives import hashes
-
-        off = self.offset
         if self.copyMethod == 0 and (1 << 20) > self.size >= 0x800+0xA00 and self.address == 0x08006000:
             if self.sectionData[0x50 : 0x53] == b"K9L":
                 self.guessedType = self.sectionData[0x50 : 0x54].decode("ascii")
@@ -197,19 +202,14 @@ class FirmSectionHeader(object):
             if self.sectionData[0x100 : 0x104] == b"NCCH":
                 self.guessedType = "Kernel11 modules"
 
-        H = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        H.update(self.sectionData)
-        self.hashIsValid = self.hash == H.finalize()
+        hash = SHA256.new(self.sectionData).digest()
+        self.hashIsValid = self.hash == hash
 
     def doNtrCrypto(self, encrypt = True):
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
         iv = pack("<4I", self.offset, self.address, self.size, self.size)
-        key = spiCryptoKey.get(self.kind.split('-')[-1], "retail")
-        cipher = Cipher(algorithms.AES(unhexlify(key)), modes.CBC(iv), backend=default_backend())
-        obj = cipher.encryptor() if encrypt else cipher.decryptor()
-        return obj.update(self.sectionData) + obj.finalize()
+        key = unhexlify(spiCryptoKey.get(self.kind.split('-')[-1], "retail"))
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        return cipher.encrypt(self.sectionData) if encrypt else cipher.decrypt(self.sectionData)
 
     def __init__(self, n, kind = "nand-retail", data = None):
         self.num = n
@@ -225,17 +225,12 @@ class FirmSectionHeader(object):
             self.check()
 
     def setData(self, data):
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives import hashes
-
         self.sectionData = data + b'\xFF' *  ((512 - (len(data) % 512)) % 512)
         self.size = len(self.sectionData)
         self.guessedType = ''
         self.hashIsValid = True
 
-        H = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        H.update(self.sectionData)
-        self.hash = H.finalize()
+        self.hash = SHA256.new(self.sectionData).digest()
 
     def buildHeader(self):
         return pack("<4I32s", self.offset, self.address, self.size, self.copyMethod, self.hash)
@@ -249,7 +244,9 @@ class FirmSectionHeader(object):
             while pos < self.size:
                 size = unpack_from("<I", self.sectionData, pos + 0x104)[0] * 0x200
                 name = self.sectionData[pos + 0x200: pos + 0x208].decode("ascii")
-                name = "{0}.cxi".format(name[:name.find('\x00')])
+                nullBytePos = name.find('\x00')
+                name = name if nullBytePos == -1 else name[:nullBytePos]
+                name = "{0}.cxi".format(name)
                 with open(os.path.join(basePath, "modules", name), "wb+") as f:
                     f.write(self.sectionData[pos : pos + size])
                 pos += size
@@ -258,27 +255,23 @@ class FirmSectionHeader(object):
                 f.write(self.sectionData)
 
         elif self.guessedType.startswith("K9L") and secretSector is not None:
-            from cryptography.hazmat.backends import default_backend
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
+            # kek is in keyslot 0x11, as "normal key"
             encKeyX = self.sectionData[:0x10] if self.guessedType[3] == '0' else self.sectionData[0x60 : 0x70]
-            key0x11 = secretSector[:0x10] if self.guessedType[3] != '2' else secretSector[0x10 : 0x20]
+            kek = secretSector[:0x10] if self.guessedType[3] != '2' else secretSector[0x10 : 0x20]
 
-            de = Cipher(algorithms.AES(key0x11), modes.ECB(), backend=default_backend()).decryptor()
-            keyX = de.update(encKeyX) + de.finalize()
-
+            keyX = AES.new(kek, AES.MODE_ECB).decrypt(encKeyX)
             keyY = self.sectionData[0x10 : 0x20]
-
-            ctr = self.sectionData[0x20 : 0x30]
             key = unhexlify("{0:032X}".format(keyscrambler(int(hexlify(keyX), 16), int(hexlify(keyY), 16))))
 
+            ctr = self.sectionData[0x20 : 0x30]
             sizeDec = self.sectionData[0x30 : 0x38].decode("ascii")
-            size = int(sizeDec[:sizeDec.find('\x00')])
+            size = int(sizeDec[:sizeDec.find('\x00')], 10)
 
             data = self.sectionData
             if 0x800 + size <= self.size:
-                de = Cipher(algorithms.AES(key), modes.CTR(ctr), backend=default_backend()).decryptor()
-                data = b''.join((self.sectionData[:0x800], de.update(self.sectionData[0x800 : 0x800 + size]), de.finalize(), self.sectionData[0x800+size:]))
+                cipher = AES.new(key, AES.MODE_CTR, initial_value=ctr, nonce=b'')
+                decData = cipher.decrypt(self.sectionData[0x800 : 0x800 + size])
+                data = b''.join((self.sectionData[:0x800], decData, self.sectionData[0x800+size:]))
                 if extractModules:
                     exportP9(basePath, data)
 
@@ -356,8 +349,8 @@ class Firm(object):
     def __str__(self):
         hdr = """Priority:\t\t{0}
 
-ARM9 entrypoint:\t0x{1:08X}{2}
-ARM11 entrypoint:\t0x{3:08X}{4}
+Arm9 entrypoint:\t0x{1:08X}{2}
+Arm11 entrypoint:\t0x{3:08X}{4}
 
 RSA-2048 signature:\t{5:0256X}
 
@@ -423,23 +416,18 @@ def buildFirm(args):
 
     firmObj.check()
     if not firmObj.arm9EntrypointFound:
-        raise ValueError("invalid or missing ARM9 entrypoint")
+        raise ValueError("invalid or missing Arm9 entrypoint")
 
     if not (firmObj.arm11Entrypoint == 0 or firmObj.arm11EntrypointFound):  # bootrom / FIRM won't boot firms with a NULL arm11 ep, though
-        raise ValueError("invalid or missing ARM11 entrypoint")
-    
+        raise ValueError("invalid or missing Arm11 entrypoint")
+
     if args.signature:
         firmObj.signature = unhexlify(perfectSignatures["firm-" + args.signature])
     data = firmObj.build()
     args.outfile.write(data)
     if args.generate_hash:
         with open(args.outfile.name + ".sha", "wb+") as f:
-            from cryptography.hazmat.backends import default_backend
-            from cryptography.hazmat.primitives import hashes
-
-            H = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            H.update(data)
-            f.write(H.finalize())
+            f.write(SHA256.new(data).digest())
 
 def Uint32(s):
     N = 0
@@ -475,16 +463,15 @@ def main(args=None):
     parser_build = subparsers.add_parser("build")
     parser_build.set_defaults(func=buildFirm)
     parser_build.add_argument("outfile", help="Output firmware file", type=argparse.FileType("wb+"))
-    parser_build.add_argument("-n", "--arm9-entrypoint", help="ARM9 entrypoint (deduced from the first ELF file having an entrypoint and corresponding to a NDMA-copied \
+    parser_build.add_argument("-n", "--arm9-entrypoint", help="Arm9 entrypoint (deduced from the first ELF file having an entrypoint and corresponding to a NDMA-copied \
     section, otherwise required)", type=Uint32, default=0) # "nine"
-    parser_build.add_argument("-e", "--arm11-entrypoint", help="ARM11 entrypoint (deduced from the first ELF file having and entrypoint and corresponding to a XDMA-copied \
+    parser_build.add_argument("-e", "--arm11-entrypoint", help="Arm11 entrypoint (deduced from the first ELF file having and entrypoint and corresponding to a XDMA-copied \
     section, otherwise required)", type=Uint32, default=0) # "eleven"
     parser_build.add_argument("-D", "--section-data", help="Files containing the data of each section (required)", type=argparse.FileType("rb"), nargs='+', required=True)
     parser_build.add_argument("-A", "--section-addresses", help="Loading address of each section (inferred from the corresponding ELF file, otherwise required)",
     type=Uint32, nargs='+', default=[])
     parser_build.add_argument("-C", "--section-copy-methods", help="Copy method of each section (NDMA, XDMA, memcpy) (required)", choices=("NDMA", "XDMA", "memcpy"), nargs='+', required=True)
-    parser_build.add_argument("-S", "--signature", help="The kind of the perfect signature to include (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
-    parser_build.add_argument("-t", "--type", help="Same as --signature", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
+    parser_build.add_argument("-S", "--signature", "-t", "--type", help="The kind of the perfect signature to include (default: nand-retail)", choices=("nand-retail", "spi-retail", "nand-dev", "spi-dev"), default="nand-retail")
     parser_build.add_argument("-g", "--generate-hash", help="Generate a .sha file containing the SHA256 digest of the output file", action="store_true", default=False)
     parser_build.add_argument("-i", "--suggest-screen-init", help="Suggest that screen init should be done before launching the output file", action="store_true", default=False)
     parser_build.add_argument("-b", "--suggest-skipping-bootrom-lockout", help="Suggest skipping bootrom lockout", action="store_true", default=False)

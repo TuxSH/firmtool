@@ -19,18 +19,18 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 setup(name='firmtool',
-    version='1.3',
+    version='1.4',
     description='Parses, extracts, and builds 3DS firmware files',
     license='BSD',
     keywords='3DS firmware parse extract build',
     author='TuxSH',
-    author_email='tuxsh@sfr.fr',
+    author_email='lumas@phe.re',
     long_description=read('README.md'),
     classifiers=[
         "Topic :: Utilities",
         "License :: OSI Approved :: BSD License",
     ],
-    install_requires=['cryptography'],
+    install_requires=['pycryptodome'],
     packages=['firmtool'],
     entry_points={ "console_scripts": [ "firmtool=firmtool.__main__:main" ] }
 )
